@@ -68,3 +68,87 @@ Avec ce pipeline, nous toucherons donc:
 6. aux variables Jinja
 7. et beaucoup, beaucoup d'autres concepts même certains peu connus des débutants :)
 
+# Description du jeu de données et création de la table dans DuckDB
+## Le jeu de données
+On va s'intéresser à l'API en temps réel de [The Open Sky Network](https://opensky-network.org/) qui, si on l'appelle
+avec la commande suivante:
+```{python}
+import requests
+
+url = "https://opensky-network.org/api/states/all?extended=true"
+
+req = requests.get(url)
+req.raise_for_status()
+data = req.json()
+```
+nous retourne le `JSON` suivant (exemple):
+```{json}
+{
+    "time": 1726411230,
+    "states": [
+        ['a21b73', 'N235DW  ', 'United States', 1726413146, 1726413146, -69.0674, 44.4467, 632.46, False, 76.68, 281.61, -0.33, None, 746.76, None, False, 0, 0]
+    ]
+}
+```
+où:
+  - la clé `time` renvoie au temps Epoch (pour en savoir plus, cliquer [ici](https://fr.wikipedia.org/wiki/Heure_Unix))
+  - la clé `states` contient les "vecteurs" (voir [documentation ici](https://openskynetwork.github.io/opensky-api/index.html#state-vectors))
+
+En utilisant la documentation de The Open Sky Network, on peut transformer ces vecteurs
+en dictionnaires. Par exemple, le vecteur ci-dessus devient:
+```{json}
+{
+    "icao24": "a21b73",
+    "callsign": "N235DW  ",
+    "origin_country": "United States",
+    "time_position": 1726413146,
+    "last_contact": 1726413146,
+    "longitude": -69.0674,
+    "latitude": 44.4467,
+    "baro_altitude": 632.46,
+    "on_ground": false,
+    "velocity": 76.68,
+    "true_track": 281.61,
+    "vertical_rate": -0.33,
+    "sensors": null,
+    "geo_altitude": 746.76,
+    "squawk": null,
+    "spi": false,
+    "position_source": 0,
+    "category": 0
+}
+```
+
+## Création de la base de données DuckDB
+Pour créer la base de données DuckDB, je vous recommende de:
+  - utiliser [DBeaver](https://dbeaver.io/)
+  - Créer la connection vers DuckDB
+  - Créer notre table de données brutes avec la commande ci-dessous
+
+```{sql}
+CREATE TABLE openskynetwork_brute (
+    icao24 STRING,
+    callsign STRING,
+    origin_country STRING,
+    time_position INT,
+    last_contact INT,
+    longitude FLOAT,
+    latitude FLOAT,
+    baro_altitude FLOAT,
+    on_ground BOOL,
+    velocity FLOAT,
+    true_track FLOAT,
+    vertical_rate FLOAT,
+    sensors INT[],
+    geo_altitude FLOAT,
+    squawk STRING,
+    spi BOOL,
+    position_source INT,
+    category INT
+);
+```
+
+Pour vérifier que la création de la table est réussie, vous pouvez utiliser le SQL suivant:
+```{sql}
+SELECT * FROM bdd_airflow.main.openskynetwork_brute 
+```

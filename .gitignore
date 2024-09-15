@@ -4,3 +4,4 @@ logs/
 veng/
 videos/
 __pycache__
+*.py
