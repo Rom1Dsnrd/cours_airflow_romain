@@ -1,2 +1,7 @@
 *.log
 .idea/
+logs/*
+dags/*py
+plugins/*
+venv/*
+videos/*
