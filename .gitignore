@@ -4,4 +4,4 @@ logs/
 veng/
 videos/
 __pycache__
-*.py
+bdd_airflow
