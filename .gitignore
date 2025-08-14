@@ -5,9 +5,12 @@ veng/
 videos/
 __pycache__
 venv/
+bdd_airflow
+dags/data/bdd_airflow
 
 # DuckDB
 *.duckdb
 *.wal
 *.tmp
 
+bdd_airflow
