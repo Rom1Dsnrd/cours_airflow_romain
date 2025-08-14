@@ -4,3 +4,10 @@ logs/
 veng/
 videos/
 __pycache__
+venv/
+
+# DuckDB
+*.duckdb
+*.wal
+*.tmp
+
