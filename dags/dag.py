@@ -36,7 +36,7 @@ credentials = {
 DATA_FILE_PATH = "dags/data/data.json"
 DATABASE = 'dags/data/bdd_airflow'
 
-@task
+@task()
 def connect_to_api(url_all_states=url_all_states, credentials=credentials):
     # Logic to connect to the API goes here
     print("Connecting to API...")
@@ -68,17 +68,19 @@ def connect_to_api(url_all_states=url_all_states, credentials=credentials):
         print(f"Failed to retrieve data: {api_response.status_code} {api_response.text}")
         return False
     
-@task
-def load_from_file(file_path):
+@task()
+def load_from_file(**kwargs):
     # Logic to load data from a file and write to DuckDB
-    print(f"Loading data from file: {file_path}")
+    ti = kwargs['ti']
+    data_file_name = ti.xcom_pull(task_ids='get_flight_data', key='return_value')
+    print(f"Loading data from file: {data_file_name}")
     con = None
     try:
         con = duckdb.connect(database=DATABASE)
         # Create table and insert data using DuckDB's JSON reader
         con.execute(f"""
             INSERT INTO bdd_airflow.main.openskynetwork_brute(
-            SELECT * FROM '{file_path}')
+            SELECT * FROM '{data_file_name}')
         """)
         print("Data loaded into DuckDB successfully")
         con.close()
@@ -90,27 +92,26 @@ def load_from_file(file_path):
         if 'con' in locals():
             con.close()
     
-@task
-def get_flight_data(data,data_file_name):
+@task()
+def get_flight_data(data):
     # Logic to get data goes here
     print("Getting data...")
     if data:
         timestamp = data['timestamp']
         states = data['states']
+        data_file_name = f'dags/data/data_{timestamp}.json'
         if states:
-            for state in states:
-                state_dict = dict(zip(columns_open_sky, state))
-                #print(state_dict)
-                with open(data_file_name, "w") as f:
+            with open(data_file_name, "w") as f:
+                for state in states:
+                    state_dict = dict(zip(columns_open_sky, state))
                     json.dump(state_dict, f)
                     f.write("\n")
-                return data_file_name
+            return data_file_name
         else:
             print("No states data available")
-        
     else:
         print("No data available")
-@task
+@task()
 def check_row_numbers():
     print("Checking row numbers...")
     # Logic to check row numbers goes here
@@ -120,7 +121,7 @@ def check_row_numbers():
     con.close()
     return True
 
-@task
+@task()
 def check_duplicates():
     print("Checking for duplicates...")
     # Logic to check for duplicates goes here
@@ -145,8 +146,8 @@ def check_duplicates():
 def flights_pipeline():
    (
        EmptyOperator(task_id="start")
-        >> get_flight_data(connect_to_api(), DATA_FILE_PATH)
-        >> load_from_file(DATA_FILE_PATH)
+        >> get_flight_data(connect_to_api())
+        >> load_from_file()
         >> [check_row_numbers(), check_duplicates()]
         >> EmptyOperator(task_id="end")
    )
