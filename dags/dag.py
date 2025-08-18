@@ -2,7 +2,7 @@ from airflow.decorators import task
 from airflow.decorators import dag
 from airflow.models.dag import dag
 from airflow.operators.empty import EmptyOperator
-from requests import get, auth
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 import requests
 import json
 import duckdb
@@ -76,29 +76,14 @@ def connect_to_api(url_all_states=url_all_states, credentials=credentials):
         print(f"Failed to retrieve data: {api_response.status_code} {api_response.text}")
         return False
     
-@task()
-def load_from_file(**kwargs):
-    # Logic to load data from a file and write to DuckDB
-    ti = kwargs['ti']
-    data_file_name = ti.xcom_pull(task_ids='get_flight_data', key='filename')
-    print(f"Loading data from file: {data_file_name}")
-    con = None
-    try:
-        con = duckdb.connect(database=DATABASE)
-        # Create table and insert data using DuckDB's JSON reader
-        con.execute(f"""
-            INSERT INTO bdd_airflow.main.openskynetwork_brute(
-            SELECT * FROM '{data_file_name}')
-        """)
-        print("Data loaded into DuckDB successfully")
-        con.close()
-        return True
-    except Exception as e:
-        print(f"Error loading data into DuckDB: {e}")
-        return None
-    finally:
-        if 'con' in locals():
-            con.close()
+def load_from_file():
+    return SQLExecuteQueryOperator(
+        task_id="load_from_file",
+        conn_id="DUCK_DB",
+        sql="INSERT INTO bdd_airflow.main.openskynetwork_brute(SELECT * FROM '{{ti.xcom_pull(task_ids='get_flight_data', key='filename')}}')",
+        return_last = True,
+        show_return_value_in_logs = True
+    )
     
 @task(multiple_outputs=True)
 def get_flight_data(data):
@@ -122,42 +107,24 @@ def get_flight_data(data):
     else:
         print("No data available")
         
-@task()
+@task()        
 def check_row_numbers(ti=None):
-    contenu_xcom = ti.xcom_pull(task_ids='get_flight_data', key='return_value')
-    timestamp = contenu_xcom['timestamp']
-    nb_lines_json = contenu_xcom['nb_lines']
+    nb_lines_json = ti.xcom_pull(task_ids='load_from_file', key='return_value')[0][0]
+    nb_lines_db = ti.xcom_pull(task_ids='get_flight_data', key='nb_lines')
     print("Checking row numbers...")
-    # Logic to check row numbers goes here
-    con = duckdb.connect(database=DATABASE,read_only=True)
-    nb_lines_db = con.execute(f"SELECT COUNT(*) FROM bdd_airflow.main.openskynetwork_brute where timestamp = {timestamp}").fetchone()[0]
-    print(f"Number of rows in table: {nb_lines_db}")
-    con.close()
     if nb_lines_db != nb_lines_json:
-        print("Nombre de lignes dans la base de données ne correspond pas au nombre de lignes dans le fichier JSON.")
-        return False
-    return True 
+        raise Exception("Nombre de lignes dans la base de données ne correspond pas au nombre de lignes dans le fichier JSON.")
+    return True
 
-@task()
 def check_duplicates():
     print("Checking for duplicates...")
-    # Logic to check for duplicates goes here
-    con = duckdb.connect(database=DATABASE,read_only=True)
-    query = """
-        SELECT callsign, time_position, last_contact, COUNT(*) as cnt
-        FROM bdd_airflow.main.openskynetwork_brute
-        GROUP BY callsign, time_position, last_contact
-        HAVING cnt > 1
-    """
-    duplicates = con.execute(query).fetchall()
-    if duplicates:
-        print(f"Found {len(duplicates)} duplicate rows:")
-        for row in duplicates:
-            print(row)
-    else:
-        print("No duplicates found.")
-    con.close()
-    return True
+    return SQLExecuteQueryOperator(
+        task_id="check_duplicates",
+        conn_id="DUCK_DB",
+        sql= "data/check_duplicates.sql",
+        return_last=True,
+        show_return_value_in_logs=True
+    )
 
 @dag()
 def flights_pipeline():
