@@ -36,6 +36,14 @@ credentials = {
 DATA_FILE_PATH = "dags/data/data.json"
 DATABASE = 'dags/data/bdd_airflow'
 
+def to_dict(states_list,columns,timestamp):
+    out = []
+    for state in states_list:
+        state_dict = dict(zip(columns, state ))
+        state_dict["timestamp"] = timestamp
+        out.append(state_dict)
+    return out
+
 @task()
 def connect_to_api(url_all_states=url_all_states, credentials=credentials):
     # Logic to connect to the API goes here
@@ -72,7 +80,7 @@ def connect_to_api(url_all_states=url_all_states, credentials=credentials):
 def load_from_file(**kwargs):
     # Logic to load data from a file and write to DuckDB
     ti = kwargs['ti']
-    data_file_name = ti.xcom_pull(task_ids='get_flight_data', key='return_value')
+    data_file_name = ti.xcom_pull(task_ids='get_flight_data', key='filename')
     print(f"Loading data from file: {data_file_name}")
     con = None
     try:
@@ -92,7 +100,7 @@ def load_from_file(**kwargs):
         if 'con' in locals():
             con.close()
     
-@task()
+@task(multiple_outputs=True)
 def get_flight_data(data):
     # Logic to get data goes here
     print("Getting data...")
@@ -101,25 +109,34 @@ def get_flight_data(data):
         states = data['states']
         data_file_name = f'dags/data/data_{timestamp}.json'
         if states:
+            states_json = to_dict(states, columns_open_sky, timestamp)
             with open(data_file_name, "w") as f:
-                for state in states:
-                    state_dict = dict(zip(columns_open_sky, state))
-                    json.dump(state_dict, f)
+                for state in states_json:
+                    json.dump(state, f)
                     f.write("\n")
-            return data_file_name
+            return {"filename": data_file_name,
+                    "nb_lines": len(states_json), 
+                    "timestamp": timestamp}
         else:
             print("No states data available")
     else:
         print("No data available")
+        
 @task()
-def check_row_numbers():
+def check_row_numbers(ti=None):
+    contenu_xcom = ti.xcom_pull(task_ids='get_flight_data', key='return_value')
+    timestamp = contenu_xcom['timestamp']
+    nb_lines_json = contenu_xcom['nb_lines']
     print("Checking row numbers...")
     # Logic to check row numbers goes here
     con = duckdb.connect(database=DATABASE,read_only=True)
-    result = con.execute("SELECT COUNT(*) FROM bdd_airflow.main.openskynetwork_brute").fetchone()
-    print(f"Number of rows in table: {result[0]}")
+    nb_lines_db = con.execute(f"SELECT COUNT(*) FROM bdd_airflow.main.openskynetwork_brute where timestamp = {timestamp}").fetchone()[0]
+    print(f"Number of rows in table: {nb_lines_db}")
     con.close()
-    return True
+    if nb_lines_db != nb_lines_json:
+        print("Nombre de lignes dans la base de données ne correspond pas au nombre de lignes dans le fichier JSON.")
+        return False
+    return True 
 
 @task()
 def check_duplicates():

@@ -14,3 +14,4 @@ dags/data/bdd_airflow
 *.tmp
 
 bdd_airflow
+dags/data/data_*.json
