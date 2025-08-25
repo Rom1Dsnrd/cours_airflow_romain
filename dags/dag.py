@@ -5,6 +5,8 @@ from airflow.models.dag import dag
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.models.param import Param
+from airflow.sensors.filesystem import FileSensor
+from datetime import datetime
 import requests
 import json
 import duckdb
@@ -77,15 +79,21 @@ def flights_to_dict(flights_list, timestamp):
         out.append(flight)
     return out
 
+def format_datetime(input_dt):
+    return input_dt.strftime("%Y%m%d")
+
 @task(multiple_outputs=True)
-def run_parameters(params=None):
+def run_parameters(params=None,dag_run=None):
+    data_interval_start = format_datetime(dag_run.data_interval_start)
+    data_interval_end = format_datetime(dag_run.data_interval_end)
+    print(dag_run.data_interval_start,dag_run.data_interval_end)
     out = endpoint_to_params[params["endpoint"]]
     
     if out["timestamp_required"]:
         end_time = int(time.time())
         begin_time = end_time - 3600
         out["url"] = out["url"].format(begin=begin_time, end=end_time)
-        
+    out['data_file_name'] = f'dags/data/data_{data_interval_start}_{data_interval_end}.json'
     return out
 
   
@@ -101,8 +109,10 @@ def load_from_file():
 
 @task(multiple_outputs=True)
 def get_data(creds,ti=None):
-    url = ti.xcom_pull(task_ids='run_parameters', key='url')
-    colonnes = ti.xcom_pull(task_ids='run_parameters', key='columns')
+    run_parameters = ti.xcom_pull(task_ids='run_parameters', key = 'return_value')
+    url = run_parameters['url']
+    colonnes = run_parameters['columns']
+    data_file_name = run_parameters['data_file_name']
     # Logic to connect to the API goes here
     print("Connecting to API...")
     # Auth URL
@@ -135,8 +145,8 @@ def get_data(creds,ti=None):
             timestamp = int(time.time())
             results_json = flights_to_dict(response, timestamp)
 
-        data_file_name = f'dags/data/data_{timestamp}.json'
-        
+        data_file_name = data_file_name
+
         with open(data_file_name, "w") as f:
                 for state in results_json:
                     json.dump(state, f)
@@ -173,11 +183,24 @@ def check_duplicates():
         "endpoint": Param(
             default="states",
             enum=list(endpoint_to_params.keys()))
-    }
+    },
+    start_date=datetime(2025, 8, 23),
+    schedule= "0 0 * * *",
+    catchup=False,
+    concurrency=1,
+    
+
 )
 def flights_pipeline():
    (
-       EmptyOperator(task_id="start")
+        EmptyOperator(task_id="start")
+        >> FileSensor(
+            task_id="wait_data",
+            fs_conn_id="conn_file",
+            filepath="dags/new_data/{{params.endpoint}}.json",
+            poke_interval=120,
+            mode="reschedule",
+            timeout=600)
         >> run_parameters()
         >> get_data(creds=CREDENTIALS)
         >> load_from_file()
